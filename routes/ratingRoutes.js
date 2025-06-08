@@ -1,3 +1,4 @@
+// local-labor-backend/routes/ratingroutes.js
 const express = require('express');
 const router = express.Router();
 const {
@@ -5,9 +6,10 @@ const {
   getRatingsForUser,
   getAverageRatingForUser,
   getRatingsForJob,
-} = require('../controllers/ratingController'); 
-const { protect } = require('../middleware/authMiddleware'); 
+} = require('../controllers/ratingController'); // Import from controller
+const { protect } = require('../middleware/authMiddleware'); // Import middleware
 
+// Routes for ratings
 router.post('/', protect, createRating); // Create a rating (protected)
 
 router.get('/user/:targetId', getRatingsForUser); // Get all ratings for a user (public)
