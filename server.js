@@ -5,8 +5,8 @@ const cors = require('cors');
 
 const authRoutes = require('./routes/authRoutes');     
 const userRoutes = require('./routes/userroutes');     
-const jobRoutes = require('./routes/jobroutes');
-const ratingRoutes = require('../routes/ratingroutes');
+const jobRoutes = require('./routes/jobRoutes');
+const ratingRoutes = require('./routes/ratingroutes');
 
 const { notFound, errorHandler } = require('./middleware/errorMiddleware');
 
