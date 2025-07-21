@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const jobSchema = new mongoose.Schema({
   employer_id: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User', 
+    ref: 'User',
     required: true,
   },
   title: {
@@ -20,18 +20,15 @@ const jobSchema = new mongoose.Schema({
     enum: ['Full-time', 'Part-time', 'Contract', 'Temporary', 'Seasonal'],
     required: true,
   },
-  // MODIFIED: Store the city provided by the employer
   city: {
     type: String,
     required: true,
     trim: true,
   },
-  // Keep the GeoJSON 'location' for geospatial queries.
-  // This will be populated by the backend using a geocoding service.
   location: {
     type: {
       type: String,
-      enum: ['Point'], // 'location.type' must be 'Point'
+      enum: ['Point'],
       required: true,
     },
     coordinates: {
@@ -39,6 +36,12 @@ const jobSchema = new mongoose.Schema({
       required: true,
       index: '2dsphere' // Essential for geospatial queries
     },
+    // ADDED: Field to store the human-readable address from geocoding
+    address_text: {
+      type: String,
+      required: false, // Optional, but highly recommended
+      trim: true
+    }
   },
   pay_rate_min: {
     type: Number,
@@ -59,13 +62,13 @@ const jobSchema = new mongoose.Schema({
     type: Date,
   },
   required_skills: {
-    type: [String], // Array of strings
+    type: [String],
     default: [],
   },
   image_url: {
     type: String,
     trim: true,
-    match: [/^https?:\/\/.+\.(jpg|jpeg|png|gif|webp)$/, 'Please use a valid image URL'],
+    // REMOVED: The 'match' regex validator. It's no longer just a user-provided URL.
   },
   status: {
     type: String,

@@ -2,9 +2,10 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const path = require('path');
 
-const authRoutes = require('./routes/authRoutes');     
-const userRoutes = require('./routes/userroutes');     
+const authRoutes = require('./routes/authRoutes');
+const userRoutes = require('./routes/userRoutes');
 const jobRoutes = require('./routes/jobRoutes');
 const ratingRoutes = require('./routes/ratingRoutes');
 const laborerRoutes = require('./routes/laborerRoutes');
@@ -24,13 +25,22 @@ mongoose.connect(MONGO_URI)
 
 // Middleware
 app.use(express.json());
+// Crucial for parsing URL-encoded data, especially when working with form submissions
+// Even though Multer handles multipart/form-data, this is good general practice for other form types.
+app.use(express.urlencoded({ extended: true }));
 app.use(cors());
 
+// IMPORTANT: This line allows serving static files (your uploaded images)
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/users', userRoutes); 
+app.use('/api/users', userRoutes);
 app.use('/api/jobs', jobRoutes);
 app.use('/api/ratings', ratingRoutes);
 app.use('/api/laborers', laborerRoutes);
+
+// Error handling middleware
 app.use(notFound);
 app.use(errorHandler);
 
