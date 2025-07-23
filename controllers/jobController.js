@@ -1,24 +1,24 @@
 const Job = require('../models/Job');
+const Application = require('../models/Application');
 const asyncHandler = require('../middleware/asyncHandler');
 const NodeGeocoder = require('node-geocoder');
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs'); // Make sure fs is imported for file operations
+const fs = require('fs');
 
-// Configure Node Geocoder for OpenStreetMap Nominatim
+// Configure Node Geocoder (unchanged)
 const options = {
     provider: 'openstreetmap',
     formatter: null
 };
 const geocoder = NodeGeocoder(options);
 
-// Multer Configuration for image uploads
-const storage = multer.diskStorage({
+// --- Multer Configuration for Job Image Uploads (Existing) ---
+const jobImageStorage = multer.diskStorage({
     destination: function (req, file, cb) {
-        const uploadDir = 'uploads/';
-        // Create the uploads directory if it doesn't exist
+        const uploadDir = 'uploads/job_images/'; // Changed directory for job images
         if (!fs.existsSync(uploadDir)) {
-            fs.mkdirSync(uploadDir);
+            fs.mkdirSync(uploadDir, { recursive: true });
         }
         cb(null, uploadDir);
     },
@@ -27,22 +27,64 @@ const storage = multer.diskStorage({
     }
 });
 
-const fileFilter = (req, file, cb) => {
+const jobImageFileFilter = (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {
         cb(null, true);
     } else {
-        cb(new Error('Only image files are allowed!'), false);
+        cb(new Error('Only image files are allowed for job images!'), false);
     }
 };
 
-const upload = multer({
-    storage: storage,
-    fileFilter: fileFilter,
-    limits: { fileSize: 1024 * 1024 * 5 } // 5MB file size limit
+const uploadJobImage = multer({
+    storage: jobImageStorage,
+    fileFilter: jobImageFileFilter,
+    limits: { fileSize: 1024 * 1024 * 5 } // 5MB limit
 });
 
 // ADDED: Define a default image path for jobs
-const DEFAULT_JOB_IMAGE_PATH = '/uploads/geo_job_default.jpg'; // Make sure this file exists in your backend's 'uploads' directory
+const DEFAULT_JOB_IMAGE_PATH = '/uploads/job_images/geo_job_default.jpg'; // Updated path
+
+// --- Multer Configuration for Application Documents (Resume, Cover Letter) ---
+const applicationDocStorage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        const uploadDir = 'uploads/applications_docs/'; // New directory for application documents
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        cb(null, uploadDir);
+    },
+    filename: function (req, file, cb) {
+        // Unique filename for resume/cover letter
+        const originalname = file.originalname;
+        const ext = path.extname(originalname);
+        const name = path.basename(originalname, ext);
+        cb(null, `${name}-${Date.now()}-${req.user._id}${ext}`); // Add user ID for more uniqueness
+    }
+});
+
+const applicationDocFileFilter = (req, file, cb) => {
+    // Allow PDF, DOC, DOCX for resumes/cover letters
+    const allowedMimeTypes = [
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    ];
+    if (allowedMimeTypes.includes(file.mimetype)) {
+        cb(null, true);
+    } else {
+        cb(new Error('Only PDF, DOC, and DOCX files are allowed for resumes/cover letters!'), false);
+    }
+};
+
+const uploadApplicationDocs = multer({
+    storage: applicationDocStorage,
+    fileFilter: applicationDocFileFilter,
+    limits: { fileSize: 1024 * 1024 * 10 } // 10MB limit for documents
+}).fields([
+    { name: 'resume', maxCount: 1 },
+    { name: 'coverLetter', maxCount: 1 }
+]);
+
 
 // @desc    Create a new job posting
 // @route   POST /api/jobs
@@ -50,14 +92,13 @@ const DEFAULT_JOB_IMAGE_PATH = '/uploads/geo_job_default.jpg'; // Make sure this
 const createJob = asyncHandler(async (req, res) => {
     const { title, description, job_type, city, pay_rate_min, pay_rate_max, pay_type, application_deadline, required_skills } = req.body;
 
-    // MODIFIED: If req.file exists, use uploaded image path; otherwise, use the default path.
-    const image_url = req.file ? `/uploads/${req.file.filename}` : DEFAULT_JOB_IMAGE_PATH;
+    // MODIFIED: Use the correct uploadJobImage middleware and directory
+    const image_url = req.file ? `/uploads/job_images/${req.file.filename}` : DEFAULT_JOB_IMAGE_PATH;
 
     if (!title || !description || !job_type || !city || !pay_rate_min || !pay_rate_max || !pay_type) {
-        // If validation fails and a file was uploaded, consider deleting it to prevent orphaned files.
         if (req.file) {
             fs.unlink(req.file.path, (err) => {
-                if (err) console.error("Error deleting partially uploaded file:", err);
+                if (err) console.error("Error deleting partially uploaded job image:", err);
             });
         }
         res.status(400);
@@ -65,7 +106,7 @@ const createJob = asyncHandler(async (req, res) => {
     }
 
     let geoCoordinates;
-    let formattedAddress = city; // Fallback to original city input
+    let formattedAddress = city;
 
     try {
         const geoResults = await geocoder.geocode(city);
@@ -100,21 +141,19 @@ const createJob = asyncHandler(async (req, res) => {
         job_type,
         city,
         location,
-        pay_rate_min: parseFloat(pay_rate_min), // Corrected variable name here
-        pay_rate_max: parseFloat(pay_rate_max), // Corrected variable name here
+        pay_rate_min: parseFloat(pay_rate_min),
+        pay_rate_max: parseFloat(pay_rate_max),
         pay_type,
         application_deadline: application_deadline ? new Date(application_deadline).toISOString() : undefined,
         required_skills: required_skills ? required_skills.split(',').map(s => s.trim()) : [],
-        image_url, // This will now always have a value (uploaded path or default path)
+        image_url,
         status: 'Active',
     });
 
     res.status(201).json(job);
 });
 
-// @desc    Get all job postings with filters
-// @route   GET /api/jobs
-// @access  Public
+// @desc    Get all job postings with filters (UNCHANGED)
 const getAllJobs = asyncHandler(async (req, res) => {
     let query = {};
 
@@ -125,9 +164,6 @@ const getAllJobs = asyncHandler(async (req, res) => {
     if (req.query.status) {
         query.status = req.query.status;
     }
-    // Note: The `skills` filter needs to be carefully considered if `required_skills` is an array.
-    // If you want to match jobs that have *any* of the specified skills, the current approach is fine.
-    // If you want to match jobs that have *all* of the specified skills, the query would be different.
     if (req.query.skills) {
         const skillsArray = req.query.skills.split(',').map(s => new RegExp(s.trim(), 'i'));
         query.required_skills = { $in: skillsArray };
@@ -137,14 +173,11 @@ const getAllJobs = asyncHandler(async (req, res) => {
 
     // 1. Job Type Filter: Handles multiple job types (e.g., "Full-time,Part-time")
     if (req.query.jobType) {
-        // Split the comma-separated string of job types into an array
         const jobTypesArray = req.query.jobType.split(',').map(type => type.trim());
-        // Use $in to match any job where job_type is one of the provided types (case-insensitive)
         query.job_type = { $in: jobTypesArray.map(type => new RegExp(type, 'i')) };
     }
 
     // 2. Location (City) Filter
-    // This uses your existing city filter, just ensuring it's applied correctly.
     if (req.query.city) {
         query.city = new RegExp(req.query.city, 'i'); // Case-insensitive search for city
     }
@@ -167,7 +200,6 @@ const getAllJobs = asyncHandler(async (req, res) => {
             case '30d':
                 cutOffDate = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000)); // Last 30 days
                 break;
-            // No default case needed if we only want these specific values
         }
 
         if (cutOffDate) {
@@ -176,14 +208,11 @@ const getAllJobs = asyncHandler(async (req, res) => {
     }
 
     // 4. Pay Rate Filters (Min and Max Pay)
-    // This logic finds jobs whose pay range [job.pay_rate_min, job.pay_rate_max]
-    // overlaps with the user's requested filter range [filterMinPay, filterMaxPay].
     let payRateConditions = [];
 
     if (req.query.minPay) {
         const minPay = parseFloat(req.query.minPay);
         if (!isNaN(minPay)) {
-            // Job's maximum pay must be greater than or equal to the filter's minimum pay
             payRateConditions.push({ pay_rate_max: { $gte: minPay } });
         }
     }
@@ -191,21 +220,16 @@ const getAllJobs = asyncHandler(async (req, res) => {
     if (req.query.maxPay) {
         const maxPay = parseFloat(req.query.maxPay);
         if (!isNaN(maxPay)) {
-            // Job's minimum pay must be less than or equal to the filter's maximum pay
             payRateConditions.push({ pay_rate_min: { $lte: maxPay } });
         }
     }
 
     if (payRateConditions.length > 0) {
-        // If there are existing conditions in 'query', combine them with $and
-        // This ensures all conditions (existing and new pay rate conditions) are met.
         if (query.$and) {
             query.$and = query.$and.concat(payRateConditions);
         } else if (Object.keys(query).length > 0) {
-            // If query has other properties but no $and yet
             query = { $and: [query].concat(payRateConditions) };
         } else {
-            // If query is empty, just use the payRateConditions
             query = { $and: payRateConditions };
         }
     }
@@ -231,13 +255,31 @@ const getAllJobs = asyncHandler(async (req, res) => {
     res.status(200).json(jobs);
 });
 
-// @desc    Get a single job by ID
+// @desc    Get a single job by ID (UNCHANGED logic, but new response structure)
 const getJobById = asyncHandler(async (req, res) => {
     const job = await Job.findById(req.params.id)
         .populate('employer_id', 'full_name company_name email profile_picture_url');
-    if (!job) { res.status(404); throw new Error('Job not found'); }
-    res.status(200).json(job);
+
+    if (!job) {
+        res.status(404);
+        throw new Error('Job not found');
+    }
+
+    let hasApplied = false;
+    // If a user is logged in AND is a laborer, check if they have applied to this job
+    if (req.user && req.user.user_type === 'laborer') {
+        const existingApplication = await Application.findOne({
+            job_id: job._id,
+            applicant_id: req.user._id,
+        });
+        if (existingApplication) {
+            hasApplied = true;
+        }
+    }
+
+    res.status(200).json({ job, hasApplied });
 });
+
 
 // @desc    Update a job posting
 const updateJob = asyncHandler(async (req, res) => {
@@ -275,21 +317,17 @@ const updateJob = asyncHandler(async (req, res) => {
         }
     }
 
-    // Handle image update:
-    let new_image_url = job.image_url; // Default to existing image from DB
-    if (req.file) { // If a new file was uploaded, use its path
-        new_image_url = `/uploads/${req.file.filename}`;
-        // OPTIONAL: Delete the old image file if it exists and is not the default image path
-        if (job.image_url && job.image_url.startsWith('/uploads/') && job.image_url !== DEFAULT_JOB_IMAGE_PATH) {
+    // Handle image update: (MODIFIED PATHS)
+    let new_image_url = job.image_url;
+    if (req.file) {
+        new_image_url = `/uploads/job_images/${req.file.filename}`;
+        if (job.image_url && job.image_url.startsWith('/uploads/job_images/') && job.image_url !== DEFAULT_JOB_IMAGE_PATH) {
             const oldImagePath = path.join(__dirname, '..', job.image_url);
             fs.unlink(oldImagePath, (err) => {
-                if (err) console.error("Error deleting old image:", err);
+                if (err) console.error("Error deleting old job image:", err);
             });
         }
     }
-    // IMPORTANT: If you want to explicitly allow clearing an image to revert to default
-    // without uploading a new one, you'd need a separate flag from the frontend.
-    // For now, if no new file is uploaded, the existing image (be it custom or default) remains.
 
 
     job.title = title || job.title;
@@ -317,7 +355,7 @@ const deleteJob = asyncHandler(async (req, res) => {
         res.status(403); throw new Error('Not authorized to delete this job');
     }
     // OPTIONAL: Delete associated image file when job is deleted, if it's not the default image
-    if (job.image_url && job.image_url.startsWith('/uploads/') && job.image_url !== DEFAULT_JOB_IMAGE_PATH) {
+    if (job.image_url && job.image_url.startsWith('/uploads/job_images/') && job.image_url !== DEFAULT_JOB_IMAGE_PATH) {
         const imagePathToDelete = path.join(__dirname, '..', job.image_url);
         fs.unlink(imagePathToDelete, (err) => {
             if (err) console.error("Error deleting job image on delete:", err);
@@ -327,13 +365,185 @@ const deleteJob = asyncHandler(async (req, res) => {
     res.status(200).json({ message: 'Job removed successfully' });
 });
 
-// @desc    Get jobs posted by the authenticated employer
+// @desc    Get jobs posted by the authenticated employer (UNCHANGED)
 const getEmployerJobs = asyncHandler(async (req, res) => {
     const employerId = req.user._id;
     const jobs = await Job.find({ employer_id: employerId })
         .sort({ posted_at: -1 });
     if (jobs) { res.status(200).json(jobs); } else { res.status(404).json({ message: 'No jobs found for this employer.' }); }
 });
+
+// @desc    Allow a laborer to apply for a job
+// @route   POST /api/jobs/:id/apply
+// @access  Private (Laborer)
+const applyForJob = asyncHandler(async (req, res) => {
+    const jobId = req.params.id;
+    const applicantId = req.user._id;
+
+    // 1. Ensure the logged-in user is a 'laborer'
+    if (req.user.user_type !== 'laborer') {
+        // If files were uploaded before this check, delete them
+        if (req.files) {
+            if (req.files.resume && req.files.resume[0]) fs.unlink(req.files.resume[0].path, (err) => console.error("Error deleting uploaded resume:", err));
+            if (req.files.coverLetter && req.files.coverLetter[0]) fs.unlink(req.files.coverLetter[0].path, (err) => console.error("Error deleting uploaded cover letter:", err));
+        }
+        res.status(403);
+        throw new Error('Only laborers can apply for jobs.');
+    }
+
+    // 2. Validate files
+    if (!req.files || !req.files.resume || req.files.resume.length === 0) {
+        // If cover letter was uploaded but resume is missing, delete cover letter
+        if (req.files && req.files.coverLetter && req.files.coverLetter[0]) {
+            fs.unlink(req.files.coverLetter[0].path, (err) => console.error("Error deleting orphaned cover letter:", err));
+        }
+        res.status(400);
+        throw new Error('Resume file is required.');
+    }
+
+    const resumePath = `/uploads/applications_docs/${req.files.resume[0].filename}`;
+    const coverLetterPath = req.files.coverLetter && req.files.coverLetter[0] ?
+        `/uploads/applications_docs/${req.files.coverLetter[0].filename}` : null;
+
+    // 3. Check if the job exists
+    const job = await Job.findById(jobId);
+    if (!job) {
+        // Delete uploaded files if job not found
+        fs.unlink(req.files.resume[0].path, (err) => console.error("Error deleting resume for non-existent job:", err));
+        if (coverLetterPath) fs.unlink(req.files.coverLetter[0].path, (err) => console.error("Error deleting cover letter for non-existent job:", err));
+        res.status(404);
+        throw new Error('Job not found.');
+    }
+
+    // 4. Check if the job is active
+    if (job.status !== 'Active') {
+        // Delete uploaded files if job not active
+        fs.unlink(req.files.resume[0].path, (err) => console.error("Error deleting resume for inactive job:", err));
+        if (coverLetterPath) fs.unlink(req.files.coverLetter[0].path, (err) => console.error("Error deleting cover letter for inactive job:", err));
+        res.status(400);
+        throw new Error('This job is not currently active for applications.');
+    }
+
+    // 5. Check if the laborer has already applied for this job
+    const existingApplication = await Application.findOne({
+        job_id: jobId,
+        applicant_id: applicantId,
+    });
+    if (existingApplication) {
+        // Delete uploaded files if already applied
+        fs.unlink(req.files.resume[0].path, (err) => console.error("Error deleting resume for duplicate application:", err));
+        if (coverLetterPath) fs.unlink(req.files.coverLetter[0].path, (err) => console.error("Error deleting cover letter for duplicate application:", err));
+        res.status(400);
+        throw new Error('You have already applied for this job.');
+    }
+
+    // 6. Create the new application
+    const newApplication = new Application({
+        job_id: jobId,
+        applicant_id: applicantId,
+        status: 'Pending',
+        resume_url: resumePath,
+        cover_letter_url: coverLetterPath, // Will be null if no cover letter uploaded
+    });
+
+    await newApplication.save();
+
+    res.status(201).json({ message: 'Application submitted successfully!', application: newApplication });
+});
+
+// @desc    Get all applications for a specific job posted by the authenticated employer
+// @route   GET /api/jobs/:jobId/applicants
+// @access  Private (Employer)
+const getApplicantsForSpecificJob = asyncHandler(async (req, res) => {
+    const jobId = req.params.jobId;
+    const employerId = req.user._id;
+
+    // 1. Ensure the logged-in user is an 'employer'
+    if (req.user.user_type !== 'employer') {
+        res.status(403);
+        throw new Error('Only employers can view job applicants.');
+    }
+
+    // 2. Verify that the job exists AND belongs to the authenticated employer
+    const job = await Job.findOne({ _id: jobId, employer_id: employerId });
+    if (!job) {
+        res.status(404);
+        throw new Error('Job not found or you are not authorized to view applicants for this job.');
+    }
+
+    // 3. Find all applications for this specific job
+    const applications = await Application.find({ job_id: jobId })
+        .populate('applicant_id', 'username full_name email phone_number profile_picture_url bio skills hourly_rate is_available')
+        .sort({ createdAt: -1 });
+
+    res.status(200).json({ jobTitle: job.title, applications });
+});
+
+// @desc    Get all applications submitted by the authenticated laborer
+// @route   GET /api/applications/my-applications
+// @access  Private (Laborer)
+const getMyApplications = asyncHandler(async (req, res) => {
+    const laborerId = req.user._id;
+
+    // 1. Ensure the logged-in user is a 'laborer'
+    if (req.user.user_type !== 'laborer') {
+        res.status(403);
+        throw new Error('Only laborers can view their applications.');
+    }
+
+    // 2. Find all applications for this specific laborer
+    const applications = await Application.find({ applicant_id: laborerId })
+        .populate('job_id', 'title description job_type city status image_url pay_rate_min pay_rate_max pay_type company_name')
+        .sort({ createdAt: -1 });
+
+    res.status(200).json({ applications });
+});
+
+// @desc    Update the status of a specific job application (by employer)
+// @route   PUT /api/applications/:id/status
+// @access  Private (Employer)
+const updateApplicationStatus = asyncHandler(async (req, res) => {
+    const applicationId = req.params.id;
+    const employerId = req.user._id;
+    const { status } = req.body;
+
+    // 1. Ensure the logged-in user is an 'employer'
+    if (req.user.user_type !== 'employer') {
+        res.status(403);
+        throw new Error('Only employers can update application status.');
+    }
+
+    // 2. Validate new status
+    const validStatuses = ['Pending', 'Reviewed', 'Interview Scheduled', 'Accepted', 'Rejected'];
+    if (!validStatuses.includes(status)) {
+        res.status(400);
+        throw new Error('Invalid application status provided.');
+    }
+
+    // 3. Find the application and populate job details to verify employer ownership
+    const application = await Application.findById(applicationId).populate({
+        path: 'job_id',
+        select: 'employer_id'
+    });
+
+    if (!application) {
+        res.status(404);
+        throw new Error('Application not found.');
+    }
+
+    // 4. Ensure the logged-in employer owns the job associated with this application
+    if (!application.job_id || application.job_id.employer_id.toString() !== employerId.toString()) {
+        res.status(403);
+        throw new Error('Not authorized to update this application status.');
+    }
+
+    // 5. Update the status
+    application.status = status;
+    await application.save();
+
+    res.status(200).json({ message: 'Application status updated successfully', application });
+});
+
 
 module.exports = {
     createJob,
@@ -342,5 +552,10 @@ module.exports = {
     updateJob,
     deleteJob,
     getEmployerJobs,
-    upload
+    applyForJob,
+    getApplicantsForSpecificJob,
+    getMyApplications,
+    updateApplicationStatus,
+    uploadJobImage, // EXPORTED: New Multer instance for job images
+    uploadApplicationDocs // EXPORTED: New Multer instance for application documents
 };

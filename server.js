@@ -3,7 +3,6 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const path = require('path');
-
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const jobRoutes = require('./routes/jobRoutes');
@@ -17,20 +16,19 @@ const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGO_URI;
 
 mongoose.connect(MONGO_URI)
-  .then(() => console.log('MongoDB connected successfully!'))
-  .catch(err => {
-    console.error('MongoDB connection error:', err);
-    process.exit(1);
-  });
+    .then(() => console.log('MongoDB connected successfully!'))
+    .catch(err => {
+        console.error('MongoDB connection error:', err);
+        process.exit(1);
+    });
 
 // Middleware
 app.use(express.json());
-// Crucial for parsing URL-encoded data, especially when working with form submissions
-// Even though Multer handles multipart/form-data, this is good general practice for other form types.
 app.use(express.urlencoded({ extended: true }));
 app.use(cors());
 
-// IMPORTANT: This line allows serving static files (your uploaded images)
+// IMPORTANT: This line allows serving static files (your uploaded images and documents)
+// It will serve files from 'uploads/' and its subdirectories like 'uploads/job_images/' and 'uploads/applications_docs/'
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Routes
@@ -45,5 +43,5 @@ app.use(notFound);
 app.use(errorHandler);
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 });
