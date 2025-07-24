@@ -10,7 +10,6 @@ const ratingRoutes = require('./routes/ratingRoutes');
 const laborerRoutes = require('./routes/laborerRoutes');
 
 const { notFound, errorHandler } = require('./middleware/errorMiddleware');
-
 const app = express();
 const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGO_URI;
