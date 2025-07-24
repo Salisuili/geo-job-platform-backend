@@ -1,14 +1,18 @@
+// local-labor-backend/controllers/userController.js
 const User = require('../models/User');
 const asyncHandler = require('../middleware/asyncHandler');
-const jwt = require('jsonwebtoken'); 
-const Rating = require('../models/Rating'); 
-const mongoose = require('mongoose'); 
+const jwt = require('jsonwebtoken');
+const Rating = require('../models/Rating');
+const mongoose = require('mongoose');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 
 const generateToken = (id, user_type, username, email) => {
   return jwt.sign(
     { _id: id, user_type, username, email },
     process.env.JWT_SECRET,
-    { expiresIn: '1h' } 
+    { expiresIn: '1h' }
   );
 };
 
@@ -29,9 +33,44 @@ const timeAgo = (date) => {
   return Math.floor(seconds) + " seconds ago";
 };
 
-// @desc      Get a single laborer's profile with aggregated ratings and reviews
-// @route     GET /api/laborers/:id
-// @access    Public (or Private if all Browse requires login)
+// Define the upload directory. This path is relative to the *root* of your backend project.
+const uploadDir = path.join(__dirname, '../uploads/profile_pictures');
+
+// Ensure the upload directory exists
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+// Set up storage for uploaded files
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir); // Upload files to the configured directory
+  },
+  filename: (req, file, cb) => {
+    // Generate a unique filename: fieldname-timestamp.ext
+    cb(null, `${file.fieldname}-${Date.now()}${path.extname(file.originalname)}`);
+  },
+});
+
+// Initialize upload middleware
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 1024 * 1024 * 5 }, // 5MB file size limit
+  fileFilter: (req, file, cb) => {
+    const filetypes = /jpeg|jpg|png|gif/;
+    const mimetype = filetypes.test(file.mimetype);
+    const extname = filetypes.test(path.extname(file.originalname).toLowerCase());
+
+    if (mimetype && extname) {
+      return cb(null, true);
+    }
+    cb(new Error('Only images (jpeg, jpg, png, gif) are allowed!'));
+  },
+});
+
+// @desc        Get a single laborer's profile with aggregated ratings and reviews
+// @route       GET /api/laborers/:id
+// @access      Public (or Private if all Browse requires login)
 const getLaborerProfileAndRatings = asyncHandler(async (req, res) => {
   const laborerId = req.params.id;
 
@@ -110,9 +149,9 @@ const getLaborerProfileAndRatings = asyncHandler(async (req, res) => {
 });
 
 
-// @desc      Get all laborer users WITH their aggregated ratings
-// @route     GET /api/users/laborers
-// @access    Private/Employer, Private/Admin (or just Private/Employer if preferred)
+// @desc        Get all laborer users WITH their aggregated ratings
+// @route       GET /api/users/laborers
+// @access      Private/Employer, Private/Admin (or just Private/Employer if preferred)
 const getAllLaborers = asyncHandler(async (req, res) => {
   const laborers = await User.aggregate([
     // Stage 1: Match only users with user_type 'laborer'
@@ -152,8 +191,6 @@ const getAllLaborers = asyncHandler(async (req, res) => {
       },
     },
     // Optional Stage 4: Add a field to format overallRating to 1 decimal place
-    // This is good for sending it directly formatted to the frontend,
-    // otherwise the frontend can format it with .toFixed(1)
     {
       $addFields: {
         overallRating: {
@@ -171,9 +208,9 @@ const getAllLaborers = asyncHandler(async (req, res) => {
 });
 
 
-// @desc      Register a new user
-// @route     POST /api/auth/register
-// @access    Public
+// @desc        Register a new user
+// @route       POST /api/auth/register
+// @access      Public
 const registerUser = asyncHandler(async (req, res) => {
   const { username, email, password, full_name, user_type, phone_number, bio, hourly_rate, skills, company_name, company_description } = req.body;
 
@@ -216,9 +253,9 @@ const registerUser = asyncHandler(async (req, res) => {
   }
 });
 
-// @desc      Authenticate user & get token
-// @route     POST /api/auth/login
-// @access    Public
+// @desc        Authenticate user & get token
+// @route       POST /api/auth/login
+// @access      Public
 const loginUser = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
@@ -242,21 +279,21 @@ const loginUser = asyncHandler(async (req, res) => {
   }
 });
 
-// @desc      Get all users (Admin only)
-// @route     GET /api/users
-// @access    Private/Admin
+// @desc        Get all users (Admin only)
+// @route       GET /api/users
+// @access      Private/Admin
 const getAllUsers = asyncHandler(async (req, res) => {
   const users = await User.find({}).select('-password'); // Fetch all users, exclude password for security
 
   res.status(200).json(users);
 });
 
-// @desc      Get user profile (for logged-in user)
-// @route     GET /api/users/profile
-// @access    Private
+// @desc        Get user profile (for logged-in user)
+// @route       GET /api/users/profile
+// @access      Private
 const getUserProfile = asyncHandler(async (req, res) => {
-  // req.user is set by the protect middleware
-  const user = await User.findById(req.user._id).select('-password');
+  // req.user is set by the protect middleware after verifying the JWT
+  const user = await User.findById(req.user._id).select('-password'); // exclude password
 
   if (user) {
     res.json({
@@ -268,10 +305,12 @@ const getUserProfile = asyncHandler(async (req, res) => {
       phone_number: user.phone_number,
       profile_picture_url: user.profile_picture_url,
       bio: user.bio,
-      hourly_rate: user.hourly_rate,
+      hourly_rate: user.hourly_rate ? Number(user.hourly_rate) : null,
       skills: user.skills,
       company_name: user.company_name,
       company_description: user.company_description,
+      is_available: user.is_available,
+      createdAt: user.createdAt ? user.createdAt.toISOString() : null,
     });
   } else {
     res.status(404);
@@ -279,34 +318,60 @@ const getUserProfile = asyncHandler(async (req, res) => {
   }
 });
 
-// @desc      Update user profile
-// @route     PUT /api/users/profile
-// @access    Private
-const updateUserProfile = asyncHandler(async (req, res) => {
+
+// @desc        Update user profile
+// @route       PUT /api/users/profile
+// @access      Private
+const updateUserProfile = asyncHandler(async (req, res, next) => {
   const user = await User.findById(req.user._id);
 
   if (user) {
-    user.full_name = req.body.full_name || user.full_name;
-    user.email = req.body.email || user.email;
-    user.phone_number = req.body.phone_number || user.phone_number;
-    user.profile_picture_url = req.body.profile_picture_url || user.profile_picture_url;
+    // --- Server-side Validation ---
+    if (!req.body.full_name || req.body.full_name.trim() === '') {
+      res.status(400); // Set status to Bad Request
+      throw new Error('Full name is required.');
+    }
+
+    if (!req.body.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(req.body.email)) {
+      res.status(400);
+      throw new Error('Valid email is required.');
+    }
+    // --- End of Validation ---
+
+    // Update fields from req.body (parsed as form data by multer)
+    // Use trimmed values for strings to remove leading/trailing whitespace
+    user.full_name = req.body.full_name.trim();
+    user.email = req.body.email.trim();
+    user.phone_number = req.body.phone_number ? req.body.phone_number.trim() : null;
+
+    // Handle profile picture update if a new file is uploaded
+    if (req.file) {
+      const relativePath = path.relative(path.join(__dirname, '..'), req.file.path);
+      user.profile_picture_url = `/${relativePath.replace(/\\/g, '/')}`;
+    }
+
     // Add conditional updates based on user_type
     if (user.user_type === 'laborer') {
-      user.bio = req.body.bio || user.bio;
-      user.hourly_rate = req.body.hourly_rate || user.hourly_rate;
-      user.skills = req.body.skills || user.skills;
-      user.is_available = req.body.is_available !== undefined ? req.body.is_available : user.is_available;
+      user.bio = req.body.bio ? req.body.bio.trim() : null;
+      user.hourly_rate = req.body.hourly_rate || user.hourly_rate; // Number, so no trim
+      // Multer processes form data, so skills might come as a JSON string if sent that way
+      user.skills = req.body.skills ? JSON.parse(req.body.skills) : user.skills;
+      // Convert 'true'/'false' string from FormData to boolean
+      user.is_available = req.body.is_available !== undefined ? (req.body.is_available === 'true') : user.is_available;
     } else if (user.user_type === 'employer') {
-      user.company_name = req.body.company_name || user.company_name;
-      user.company_description = req.body.company_description || user.company_description;
+      user.company_name = req.body.company_name ? req.body.company_name.trim() : null;
+      user.company_description = req.body.company_description ? req.body.company_description.trim() : null;
     }
 
-    // Only update password if new password is provided
-    if (req.body.password) {
-      user.password = req.body.password; // Mongoose pre-save hook will hash this
+    // Only update password if new password is provided and not empty
+    if (req.body.password && req.body.password.trim() !== '') {
+      user.password = req.body.password;
     }
 
-    const updatedUser = await user.save();
+    const updatedUser = await user.save(); // This save should now pass validation for full_name and email
+
+    // Re-generate token with potentially updated user info
+    const token = generateToken(updatedUser._id, updatedUser.user_type, updatedUser.username, updatedUser.email);
 
     res.json({
       _id: updatedUser._id,
@@ -315,7 +380,15 @@ const updateUserProfile = asyncHandler(async (req, res) => {
       full_name: updatedUser.full_name,
       user_type: updatedUser.user_type,
       profile_picture_url: updatedUser.profile_picture_url,
-      token: generateToken(updatedUser._id, updatedUser.user_type, updatedUser.username, updatedUser.email),
+      bio: updatedUser.bio,
+      hourly_rate: updatedUser.hourly_rate,
+      skills: updatedUser.skills,
+      is_available: updatedUser.is_available,
+      phone_number: updatedUser.phone_number,
+      company_name: updatedUser.company_name,
+      company_description: updatedUser.company_description,
+      createdAt: updatedUser.createdAt ? updatedUser.createdAt.toISOString() : null,
+      token: token,
     });
   } else {
     res.status(404);
@@ -323,7 +396,7 @@ const updateUserProfile = asyncHandler(async (req, res) => {
   }
 });
 
-
+// --- Module Exports ---
 module.exports = {
   registerUser,
   loginUser,
@@ -331,5 +404,6 @@ module.exports = {
   getUserProfile,
   updateUserProfile,
   getAllLaborers,
-  getLaborerProfileAndRatings, // <--- Export the new function
+  getLaborerProfileAndRatings,
+  upload // Export upload middleware so it can be used in your routes
 };
