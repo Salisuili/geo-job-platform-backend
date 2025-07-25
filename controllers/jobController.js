@@ -101,8 +101,8 @@ const createJob = asyncHandler(async (req, res) => {
         throw new Error('Please fill in all required job fields (title, description, job type, city, pay rates, pay type).');
     }
 
-    let geoCoordinates;
-    let formattedAddress = city;
+    let geoCoordinates = [0, 0]; // Default coordinates if geocoding fails
+    let formattedAddress = city; // Default to the input city
 
     try {
         const geoResults = await geocoder.geocode(city);
@@ -115,13 +115,15 @@ const createJob = asyncHandler(async (req, res) => {
                 formattedAddress = `${geoResults[0].city}, ${geoResults[0].country}`;
             }
         } else {
-            res.status(400);
-            throw new Error(`Could not find coordinates for the city: "${city}". Please enter a valid city.`);
+            // Geocoding found no results, log and proceed with default coordinates
+            console.warn(`Geocoding: Could not find precise coordinates for "${city}". Proceeding with default [0,0].`);
+            // No need to throw an error here, just use defaults
         }
     } catch (geoError) {
+        // Geocoding service error, log and proceed with default coordinates
         console.error('Geocoding service error:', geoError);
-        res.status(500);
-        throw new Error('Error processing job location. Please try again later or verify the city.');
+        console.warn(`Geocoding: Error during geocoding for "${city}". Proceeding with default [0,0].`);
+        // No need to throw an error here, just use defaults
     }
 
     const location = {
@@ -360,12 +362,16 @@ const getEmployerJobs = asyncHandler(async (req, res) => {
         .sort({ posted_at: -1 })
         .lean(); // Use .lean() to get plain JavaScript objects for easier modification
 
+    console.log('Backend Log: Fetched jobs for employer:', jobs); // <-- ADDED LOG
+
     if (!jobs || jobs.length === 0) {
+        console.log('Backend Log: No jobs found for this employer. Returning empty array.'); // <-- ADDED LOG
         return res.status(200).json([]); // Return empty array if no jobs found
     }
 
-    
+    // Get all job IDs for the current employer
     const jobIds = jobs.map(job => job._id);
+    console.log('Backend Log: Job IDs to aggregate:', jobIds); // <-- ADDED LOG
 
     // Aggregate application counts for all jobs in one go
     const applicationCounts = await Application.aggregate([
@@ -373,6 +379,7 @@ const getEmployerJobs = asyncHandler(async (req, res) => {
         { $group: { _id: '$job_id', count: { $sum: 1 } } } // Group by job_id and count
     ]);
 
+    console.log('Backend Log: Raw application counts from aggregation:', applicationCounts); // <-- ADDED LOG
 
     // Create a map for quick lookup of counts
     const countsMap = new Map();
@@ -385,6 +392,8 @@ const getEmployerJobs = asyncHandler(async (req, res) => {
         const applicants_count = countsMap.get(job._id.toString()) || 0;
         return { ...job, applicants_count };
     });
+
+    console.log('Backend Log: Jobs with applicants_count before sending response:', jobsWithApplicantsCount); // <-- ADDED LOG
 
     res.status(200).json(jobsWithApplicantsCount);
 });
