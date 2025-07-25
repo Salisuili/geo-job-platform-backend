@@ -21,9 +21,6 @@ const jobImageStorage = multer.diskStorage({
             fs.mkdirSync(uploadDir, { recursive: true });
         }
         cb(null, uploadDir);
-    },
-    filename: function (req, file, cb) {
-        cb(null, file.fieldname + '-' + Date.now() + path.extname(file.originalname));
     }
 });
 
@@ -41,7 +38,8 @@ const uploadJobImage = multer({
     limits: { fileSize: 1024 * 1024 * 5 } // 5MB limit
 });
 
-const DEFAULT_JOB_IMAGE_PATH = '/uploads/job_images/geo_job_default.jpg';
+// Corrected: Default image path for consistency across frontend and backend
+const DEFAULT_JOB_IMAGE_PATH = '/uploads/geo_job_default.jpg';
 
 // --- Multer Configuration for Application Documents (Resume, Cover Letter) ---
 const applicationDocStorage = multer.diskStorage({
@@ -115,15 +113,11 @@ const createJob = asyncHandler(async (req, res) => {
                 formattedAddress = `${geoResults[0].city}, ${geoResults[0].country}`;
             }
         } else {
-            // Geocoding found no results, log and proceed with default coordinates
-            console.warn(`Geocoding: Could not find precise coordinates for "${city}". Proceeding with default [0,0].`);
-            // No need to throw an error here, just use defaults
+            // Geocoding found no results, proceed with default coordinates
         }
     } catch (geoError) {
-        // Geocoding service error, log and proceed with default coordinates
-        console.error('Geocoding service error:', geoError);
-        console.warn(`Geocoding: Error during geocoding for "${city}". Proceeding with default [0,0].`);
-        // No need to throw an error here, just use defaults
+        // Geocoding service error, proceed with default coordinates
+        console.error('Geocoding service error during job creation:', geoError);
     }
 
     const location = {
@@ -151,10 +145,19 @@ const createJob = asyncHandler(async (req, res) => {
     res.status(201).json(job);
 });
 
-// @desc    Get all job postings with filters
+// @desc    Get all job postings with filters and pagination
+// @route   GET /api/jobs
+// @access  Public
 const getAllJobs = asyncHandler(async (req, res) => {
     let query = {};
+    let isGeospatialQuery = false;
 
+    // Pagination parameters
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10; // Default limit to 10 if not provided
+    const skip = (page - 1) * limit;
+
+    // Build the base query/match conditions
     if (req.query.employerId) {
         query.employer_id = req.query.employerId;
     }
@@ -166,7 +169,6 @@ const getAllJobs = asyncHandler(async (req, res) => {
         query.required_skills = { $in: skillsArray };
     }
 
-    // --- NEW FILTER LOGIC ---
     if (req.query.jobType) {
         const jobTypesArray = req.query.jobType.split(',').map(type => type.trim());
         query.job_type = { $in: jobTypesArray.map(type => new RegExp(type, 'i')) };
@@ -226,26 +228,107 @@ const getAllJobs = asyncHandler(async (req, res) => {
         }
     }
 
-    if (req.query.long && req.query.lat && req.query.maxDistance) {
-        query.location = {
-            $nearSphere: {
-                $geometry: {
-                    type: "Point",
-                    coordinates: [parseFloat(req.query.long), parseFloat(req.query.lat)]
+    try {
+        let jobs = [];
+        let total = 0;
+
+        // Check if it's a geospatial query
+        if (req.query.long && req.query.lat && req.query.maxDistance) {
+            isGeospatialQuery = true;
+            const longitude = parseFloat(req.query.long);
+            const latitude = parseFloat(req.query.lat);
+            const maxDistance = parseInt(req.query.maxDistance);
+
+            // Aggregation pipeline for geospatial query
+            const pipeline = [
+                {
+                    $geoNear: {
+                        near: {
+                            type: "Point",
+                            coordinates: [longitude, latitude]
+                        },
+                        distanceField: "distance", // Output distance in meters
+                        maxDistance: maxDistance,
+                        spherical: true,
+                        // Apply other query filters here before $geoNear
+                        query: query // This applies all other filters to the documents before geoNear
+                    }
                 },
-                $maxDistance: parseInt(req.query.maxDistance)
-            }
-        };
+                // Sort by distance (default for $geoNear), then by posted_at if needed
+                { $sort: { distance: 1, posted_at: -1 } },
+                {
+                    $lookup: {
+                        from: 'users', // The collection name for the User model
+                        localField: 'employer_id',
+                        foreignField: '_id',
+                        as: 'employer_id'
+                    }
+                },
+                { $unwind: '$employer_id' }, // Deconstructs the array field from the input documents to output a document for each element.
+                {
+                    $project: { // Project only necessary fields for employer_id
+                        'employer_id.full_name': 1,
+                        'employer_id.company_name': 1,
+                        'employer_id.email': 1,
+                        'employer_id.profile_picture_url': 1,
+                        title: 1,
+                        description: 1,
+                        job_type: 1,
+                        city: 1,
+                        location: 1,
+                        pay_rate_min: 1,
+                        pay_rate_max: 1,
+                        pay_type: 1,
+                        application_deadline: 1,
+                        required_skills: 1,
+                        image_url: 1,
+                        status: 1,
+                        posted_at: 1,
+                        distance: 1 // Include distance in the output
+                    }
+                },
+                {
+                    $facet: {
+                        metadata: [{ $count: "total" }],
+                        data: [{ $skip: skip }, { $limit: limit }]
+                    }
+                }
+            ];
+
+            const result = await Job.aggregate(pipeline);
+
+            // Extract jobs and total from the faceted result
+            jobs = result[0].data || [];
+            total = result[0].metadata[0] ? result[0].metadata[0].total : 0;
+
+        } else {
+            // Standard Mongoose find for non-geospatial queries
+            total = await Job.countDocuments(query);
+            jobs = await Job.find(query)
+                .populate('employer_id', 'full_name company_name email profile_picture_url')
+                .sort({ posted_at: -1 }) // Sort by posted_at for non-geo queries
+                .skip(skip)
+                .limit(limit);
+        }
+
+        res.status(200).json({ jobs, total }); // Return both jobs and total count
+    } catch (dbError) {
+        console.error("MongoDB Query Error in getAllJobs:", dbError);
+        // Provide more specific error messages for the frontend
+        if (dbError.message.includes('geo near') || dbError.message.includes('2dsphere')) {
+            res.status(500).json({
+                message: 'Geospatial search error. Please ensure a 2dsphere index exists on the location.coordinates field in your MongoDB "jobs" collection and that your query is correctly structured.',
+                error: dbError.message
+            });
+        } else {
+            res.status(500).json({ message: 'Failed to fetch jobs due to a database error.', error: dbError.message });
+        }
     }
-
-    const jobs = await Job.find(query)
-        .populate('employer_id', 'full_name company_name email profile_picture_url')
-        .sort({ posted_at: -1 });
-
-    res.status(200).json(jobs);
 });
 
 // @desc    Get a single job by ID
+// @route   GET /api/jobs/:id
+// @access  Public
 const getJobById = asyncHandler(async (req, res) => {
     const job = await Job.findById(req.params.id)
         .populate('employer_id', 'full_name company_name email profile_picture_url');
@@ -271,6 +354,8 @@ const getJobById = asyncHandler(async (req, res) => {
 
 
 // @desc    Update a job posting
+// @route   PUT /api/jobs/:id
+// @access  Private (Employer/Admin only)
 const updateJob = asyncHandler(async (req, res) => {
     const { title, description, job_type, city, pay_rate_min, pay_rate_max, pay_type, application_deadline, required_skills, status } = req.body;
     const job = await Job.findById(req.params.id);
@@ -298,11 +383,11 @@ const updateJob = asyncHandler(async (req, res) => {
                 }
                 updatedLocation.address_text = newFormattedAddress;
             } else {
-                res.status(400); throw new Error(`Could not find coordinates for the new city: "${city}". Please enter a valid city.`);
+                // If geocoding fails on update, just keep the old coordinates/address or set to default
             }
         } catch (geoError) {
-            console.error('Geocoding service error:', geoError);
-            res.status(500); throw new Error('Error updating job location. Please try again later or verify the city.');
+            console.error('Geocoding service error during update:', geoError);
+            // No need to throw an error here, just use defaults
         }
     }
 
@@ -335,6 +420,8 @@ const updateJob = asyncHandler(async (req, res) => {
 });
 
 // @desc    Delete a job posting
+// @route   DELETE /api/jobs/:id
+// @access  Private (Employer/Admin only)
 const deleteJob = asyncHandler(async (req, res) => {
     const job = await Job.findById(req.params.id);
     if (!job) { res.status(404); throw new Error('Job not found'); }
@@ -362,24 +449,19 @@ const getEmployerJobs = asyncHandler(async (req, res) => {
         .sort({ posted_at: -1 })
         .lean(); // Use .lean() to get plain JavaScript objects for easier modification
 
-    console.log('Backend Log: Fetched jobs for employer:', jobs); // <-- ADDED LOG
 
     if (!jobs || jobs.length === 0) {
-        console.log('Backend Log: No jobs found for this employer. Returning empty array.'); // <-- ADDED LOG
         return res.status(200).json([]); // Return empty array if no jobs found
     }
 
     // Get all job IDs for the current employer
     const jobIds = jobs.map(job => job._id);
-    console.log('Backend Log: Job IDs to aggregate:', jobIds); // <-- ADDED LOG
 
     // Aggregate application counts for all jobs in one go
     const applicationCounts = await Application.aggregate([
         { $match: { job_id: { $in: jobIds } } }, // Match applications for these job IDs
         { $group: { _id: '$job_id', count: { $sum: 1 } } } // Group by job_id and count
     ]);
-
-    console.log('Backend Log: Raw application counts from aggregation:', applicationCounts); // <-- ADDED LOG
 
     // Create a map for quick lookup of counts
     const countsMap = new Map();
@@ -392,8 +474,6 @@ const getEmployerJobs = asyncHandler(async (req, res) => {
         const applicants_count = countsMap.get(job._id.toString()) || 0;
         return { ...job, applicants_count };
     });
-
-    console.log('Backend Log: Jobs with applicants_count before sending response:', jobsWithApplicantsCount); // <-- ADDED LOG
 
     res.status(200).json(jobsWithApplicantsCount);
 });
