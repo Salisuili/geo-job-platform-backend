@@ -1,20 +1,21 @@
+// src/routes/userRoutes.js
 const express = require('express');
 const router = express.Router();
 
 const {
   registerUser,
   loginUser,
-  getAllUsers, 
+  getAllUsers,
   getUserProfile,
   updateUserProfile,
   getAllLaborers,
-  getLaborerProfileAndRatings, 
-  upload
+  getLaborerProfileAndRatings,
+  upload // Multer upload middleware
 } = require('../controllers/userController');
 
 const {
-  protect,      
-  authorizeRoles 
+  protect,
+  authorizeRoles
 } = require('../middleware/authMiddleware');
 
 
@@ -31,21 +32,21 @@ router.post('/auth/login', loginUser);
 
 router.route('/profile')
   .get(protect, getUserProfile)
-  .put(protect, upload.single('profile_picture'), updateUserProfile);
-
+  // CORRECTED: Changed 'profile_picture' to 'profileImage' to match frontend FormData
+  .put(protect, upload.single('profileImage'), updateUserProfile);
 
 
 // ====================================================================
 // SECTION 3: Laborer-specific Routes
 // ====================================================================
 router.get('/laborers', getAllLaborers);
-router.get('/laborers/:id', getLaborerProfileAndRatings); 
+router.get('/laborers/:id', getLaborerProfileAndRatings);
 
 
 // ====================================================================
-// SECTION 4: Admin Routes (This block is now UNCOMMENTED and CORRECTED)
+// SECTION 4: Admin Routes
 // ====================================================================
-router.get('/', protect, authorizeRoles('admin'), getAllUsers); 
+router.get('/', protect, authorizeRoles('admin'), getAllUsers);
 
 
 module.exports = router;

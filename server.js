@@ -8,6 +8,7 @@ const userRoutes = require('./routes/userroutes');
 const jobRoutes = require('./routes/jobRoutes');
 const ratingRoutes = require('./routes/ratingRoutes');
 const laborerRoutes = require('./routes/laborerRoutes');
+const adminRoutes = require('./routes/adminRoutes'); // Import the new admin routes
 
 const { notFound, errorHandler } = require('./middleware/errorMiddleware');
 const app = express();
@@ -36,6 +37,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/jobs', jobRoutes);
 app.use('/api/ratings', ratingRoutes);
 app.use('/api/laborers', laborerRoutes);
+app.use('/api/admin', adminRoutes); // Use the new admin routes here
 
 // Error handling middleware
 app.use(notFound);
