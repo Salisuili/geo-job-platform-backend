@@ -2,6 +2,7 @@
 const User = require('../models/User'); // Assuming your User model is here
 const Job = require('../models/Job'); // Assuming your Job model is here
 const asyncHandler = require('../middleware/asyncHandler'); // Your existing asyncHandler
+const bcrypt = require('bcryptjs'); // Import bcrypt for password hashing
 
 // @desc    Get all employers (admin only)
 // @route   GET /api/admin/employers
@@ -67,7 +68,7 @@ const getEmployerById = asyncHandler(async (req, res) => {
 // @access  Private/Admin
 const updateEmployer = asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const { company_name, email, phone_number, address_text, user_type, company_description } = req.body;
+    const { company_name, email, phone_number, address_text, user_type, company_description, password } = req.body; // Added password
 
     const updateFields = {};
     if (company_name !== undefined) updateFields.company_name = company_name;
@@ -76,6 +77,13 @@ const updateEmployer = asyncHandler(async (req, res) => {
     if (address_text !== undefined) updateFields.address_text = address_text;
     if (company_description !== undefined) updateFields.company_description = company_description;
     if (user_type !== undefined) updateFields.user_type = user_type;
+
+    // Handle password update if provided
+    if (password) {
+        // Hash the new password
+        const salt = await bcrypt.genSalt(10);
+        updateFields.password = await bcrypt.hash(password, salt);
+    }
 
     const employer = await User.findOne({ _id: id, user_type: 'employer' });
 
@@ -171,7 +179,8 @@ const getLaborerById = asyncHandler(async (req, res) => {
 // @access  Private/Admin
 const updateLaborer = asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const { full_name, email, phone_number, bio, hourly_rate, is_available, skills, user_type } = req.body;
+    // Added password to destructured fields
+    const { full_name, email, phone_number, bio, hourly_rate, is_available, skills, user_type, password } = req.body;
 
     const updateFields = {};
     if (full_name !== undefined) updateFields.full_name = full_name;
@@ -182,6 +191,13 @@ const updateLaborer = asyncHandler(async (req, res) => {
     if (is_available !== undefined) updateFields.is_available = is_available; // Boolean
     if (skills !== undefined) updateFields.skills = Array.isArray(skills) ? skills : skills.split(',').map(s => s.trim());
     if (user_type !== undefined) updateFields.user_type = user_type;
+
+    // Handle password update if provided
+    if (password) {
+        // Hash the new password
+        const salt = await bcrypt.genSalt(10);
+        updateFields.password = await bcrypt.hash(password, salt);
+    }
 
     const laborer = await User.findOne({ _id: id, user_type: 'laborer' });
 

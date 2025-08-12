@@ -33,7 +33,7 @@ router.post('/auth/login', loginUser);
 router.route('/profile')
   .get(protect, getUserProfile)
   // CORRECTED: Changed 'profile_picture' to 'profileImage' to match frontend FormData
-  .put(protect, upload.single('profileImage'), updateUserProfile);
+  .put(protect, upload.single('profile_picture'), updateUserProfile);
 
 
 // ====================================================================
