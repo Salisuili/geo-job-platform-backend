@@ -1,21 +1,21 @@
-// src/routes/userRoutes.js
 const express = require('express');
 const router = express.Router();
 
 const {
-  registerUser,
-  loginUser,
-  getAllUsers,
-  getUserProfile,
-  updateUserProfile,
-  getAllLaborers,
-  getLaborerProfileAndRatings,
-  upload // Multer upload middleware
+  registerUser,
+  loginUser,
+  getAllUsers,
+  getUserProfile,
+  updateUserProfile,
+  getAllLaborers,
+  getLaborerProfileAndRatings,
+  upload, // Multer upload middleware
+  updateUserLocation // <-- NEW: Function to handle location update
 } = require('../controllers/userController');
 
 const {
-  protect,
-  authorizeRoles
+  protect,
+  authorizeRoles
 } = require('../middleware/authMiddleware');
 
 
@@ -31,9 +31,13 @@ router.post('/auth/login', loginUser);
 // ====================================================================
 
 router.route('/profile')
-  .get(protect, getUserProfile)
-  // CORRECTED: Changed 'profile_picture' to 'profileImage' to match frontend FormData
-  .put(protect, upload.single('profile_picture'), updateUserProfile);
+  .get(protect, getUserProfile)
+  // CORRECTED: Changed 'profile_picture' to 'profileImage' to match frontend FormData
+  .put(protect, upload.single('profile_picture'), updateUserProfile);
+
+// NEW ROUTE: Endpoint for updating user location and city based on coordinates
+// The front-end calls PUT /api/users/:id/location. Since this router is mounted at /api/users, the path is /:id/location
+router.put('/:id/location', protect, updateUserLocation);
 
 
 // ====================================================================
